@@ -20,8 +20,14 @@ export class OrdenAreaController {
         return res.status(400).json({ success: false, error: 'No se pueden añadir órdenes de área a una orden cerrada.' });
       }
 
-      const count = await OrdenArea.count({ where: { ordenId } });
-      const otId = `OT-A${count + 1}`;
+      // Generar otId único vinculado a la orden para evitar colisiones de primary key
+      const cleanOrd = ordenId.replace(/^OS-?/i, '');
+      let nextSeq = (await OrdenArea.count({ where: { ordenId } })) + 1;
+      let otId = `OT-${cleanOrd}-A${nextSeq}`;
+      while (await OrdenArea.findByPk(otId)) {
+        nextSeq++;
+        otId = `OT-${cleanOrd}-A${nextSeq}`;
+      }
       const tarifa = TARIFAS_AREA[area] || 12;
       const horasNum = parseFloat(horas || '0');
       const costoManoObra = parseFloat((horasNum * tarifa).toFixed(2));

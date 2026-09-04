@@ -17,6 +17,7 @@ import {
   User
 } from 'lucide-react';
 import SanLuisLogo from './SanLuisLogo';
+import { parseJsonResponse } from '../utils/api';
 
 interface LoginScreenProps {
   onLoginSuccess: (data: {
@@ -56,7 +57,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         }),
       });
 
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Credenciales no válidas.');
 
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Credenciales no válidas. Verifique sus datos.');
@@ -107,7 +108,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         body: JSON.stringify({ companyId: companyIdToSelect }),
       });
 
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Error al acceder a la empresa seleccionada.');
 
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Error al acceder a la empresa seleccionada.');

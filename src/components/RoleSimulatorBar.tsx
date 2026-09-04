@@ -13,7 +13,8 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
-  CheckCircle2
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 
 export interface SystemRoleDef {
@@ -165,6 +166,7 @@ interface RoleSimulatorBarProps {
   activeCompany: any;
   onSwitchRole: (userEmail: string) => Promise<void>;
   loading?: boolean;
+  onClose?: () => void;
 }
 
 export const RoleSimulatorBar: React.FC<RoleSimulatorBarProps> = ({
@@ -172,6 +174,7 @@ export const RoleSimulatorBar: React.FC<RoleSimulatorBarProps> = ({
   activeCompany,
   onSwitchRole,
   loading = false,
+  onClose,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const currentRoleDef = SYSTEM_ROLES.find(
@@ -305,6 +308,27 @@ export const RoleSimulatorBar: React.FC<RoleSimulatorBarProps> = ({
               <span>{expanded ? 'Ocultar Matriz' : 'Ver Permisos'}</span>
               {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
+
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--line)',
+                  borderRadius: 'var(--r)',
+                  padding: '3px 6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  fontSize: 11,
+                  color: 'var(--slate)',
+                  cursor: 'pointer',
+                }}
+                title="Ocultar barra de simulación"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 

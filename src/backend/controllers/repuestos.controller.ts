@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { SolicitudRepuesto, CatalogoRepuesto, OrdenServicio, OrdenArea } from '../models';
+import { SolicitudRepuesto, CatalogoRepuesto, OrdenServicio, OrdenArea, VwFlotaArticulos } from '../models';
 import { EmailService } from '../services/email.service';
 import { AuditService } from '../services/audit.service';
 import { logger } from '../utils/logger';
@@ -19,7 +19,31 @@ export class RepuestosController {
       const area = await OrdenArea.findOne({ where: { id: otId, ordenId } });
       if (!area) return res.status(404).json({ success: false, error: 'Orden de área no encontrada.' });
 
-      const articulo = await CatalogoRepuesto.findOne({ where: { cod: cod.toUpperCase().trim() } });
+      const cleanCod = String(cod || '').trim();
+      let articulo = await CatalogoRepuesto.findOne({ where: { cod: cleanCod } });
+      if (!articulo) {
+        articulo = await CatalogoRepuesto.findOne({ where: { cod: cleanCod.toUpperCase() } });
+      }
+
+      // Si no existe en la tabla local CatalogoRepuesto, buscar en la vista de Profit (VwFlotaArticulos)
+      if (!articulo) {
+        const profitArt = await VwFlotaArticulos.findOne({ where: { codigo_profit: cleanCod } });
+        if (profitArt) {
+          try {
+            articulo = await CatalogoRepuesto.create({
+              cod: profitArt.codigo_profit.trim(),
+              desc: profitArt.nombre_producto.trim(),
+              stock: profitArt.stock_act ?? 0,
+              costo: profitArt.costo ?? 0,
+              almacen: profitArt.almacen || profitArt.sub_almacen || '01',
+              categoria: profitArt.categoria || 'REPUESTOS',
+            });
+          } catch {
+            articulo = await CatalogoRepuesto.findOne({ where: { cod: cleanCod } });
+          }
+        }
+      }
+
       if (!articulo) {
         return res.status(404).json({ success: false, error: 'Artículo no encontrado en el catálogo de repuestos.' });
       }

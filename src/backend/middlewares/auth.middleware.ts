@@ -25,9 +25,21 @@ const JWT_PREAUTH_SECRET = process.env.JWT_PREAUTH_SECRET || JWT_SECRET;
 
 /**
  * Middleware para verificar tokens JWT con niveles de autorización PRE_AUTH y FULL_AUTH.
+ * Soporta tanto el uso directo router.use(authenticateToken) como el uso con fábrica router.use(authenticateToken('FULL_AUTH')).
  */
-export const authenticateToken = (expectedType: 'PRE_AUTH' | 'FULL_AUTH' = 'FULL_AUTH') => {
-  return (req: Request, res: Response, next: NextFunction) => {
+export function authenticateToken(expectedType?: 'PRE_AUTH' | 'FULL_AUTH'): (req: Request, res: Response, next: NextFunction) => void;
+export function authenticateToken(req: Request, res: Response, next: NextFunction): void;
+export function authenticateToken(
+  expectedTypeOrReq: 'PRE_AUTH' | 'FULL_AUTH' | Request = 'FULL_AUTH',
+  resOrUndefined?: Response,
+  nextOrUndefined?: NextFunction
+): any {
+  const processAuth = (
+    expectedType: 'PRE_AUTH' | 'FULL_AUTH',
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -69,6 +81,22 @@ export const authenticateToken = (expectedType: 'PRE_AUTH' | 'FULL_AUTH' = 'FULL
         code: 'AUTH_TOKEN_INVALID',
       });
     }
+  };
+
+  // Si fue llamado directamente como middleware de Express: authenticateToken(req, res, next)
+  if (
+    expectedTypeOrReq &&
+    typeof expectedTypeOrReq === 'object' &&
+    resOrUndefined &&
+    typeof nextOrUndefined === 'function'
+  ) {
+    return processAuth('FULL_AUTH', expectedTypeOrReq as Request, resOrUndefined, nextOrUndefined);
+  }
+
+  // Si fue llamado como fábrica: authenticateToken('PRE_AUTH') o authenticateToken()
+  const expectedType = expectedTypeOrReq === 'PRE_AUTH' ? 'PRE_AUTH' : 'FULL_AUTH';
+  return (req: Request, res: Response, next: NextFunction) => {
+    return processAuth(expectedType, req, res, next);
   };
 };
 

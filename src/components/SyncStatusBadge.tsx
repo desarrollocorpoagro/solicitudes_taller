@@ -15,6 +15,7 @@ import {
   Server,
   Zap,
 } from 'lucide-react';
+import { parseJsonResponse } from '../utils/api';
 
 interface SyncStatusData {
   isOnline: boolean;
@@ -63,7 +64,7 @@ export default function SyncStatusBadge({ token }: SyncStatusBadgeProps) {
   const fetchStatus = async () => {
     try {
       const res = await fetch('/api/v1/sync/status');
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Error consultando sincronización');
       if (data.success) {
         setStatus(data.data);
       }
@@ -79,7 +80,7 @@ export default function SyncStatusBadge({ token }: SyncStatusBadgeProps) {
       const res = await fetch('/api/v1/sync/queue?limit=30', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Error consultando cola de sincronización');
       if (data.success) {
         setQueueItems(data.data || []);
       }
@@ -115,7 +116,7 @@ export default function SyncStatusBadge({ token }: SyncStatusBadgeProps) {
         },
         body: JSON.stringify({ forced: true }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Error al ejecutar sincronización');
       if (data.success) {
         setToastMessage(`Sincronización exitosa: ${data.data?.outboundSynced || 0} enviadas, ${data.data?.inboundSynced || 0} recibidas.`);
         fetchStatus();
@@ -143,7 +144,7 @@ export default function SyncStatusBadge({ token }: SyncStatusBadgeProps) {
         },
         body: JSON.stringify({ simulate: targetState }),
       });
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Error al alternar modo offline');
       if (data.success) {
         setStatus(data.data);
         setToastMessage(targetState ? '🟠 Modo Autónomo (Offline-First) Activado' : '🟢 Enlace con MSSQL Restablecido');
@@ -163,7 +164,7 @@ export default function SyncStatusBadge({ token }: SyncStatusBadgeProps) {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Error al reintentar');
       if (data.success) {
         setToastMessage(data.message || 'Operaciones re-encoladas');
         fetchStatus();

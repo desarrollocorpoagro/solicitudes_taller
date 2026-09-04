@@ -25,7 +25,9 @@ import {
   Sparkles,
   Settings,
   Table,
-  Plus
+  Plus,
+  UserCheck,
+  UserX
 } from 'lucide-react';
 
 const ALL_ROLES = [
@@ -67,6 +69,11 @@ export const UserManagementModule: React.FC<{ token: string; currentUser?: any }
   const [userLimit, setUserLimit] = useState(10);
   const [userPagination, setUserPagination] = useState({ total: 0, totalPages: 1, hasMore: false });
 
+  const [userSuccessMsg, setUserSuccessMsg] = useState('');
+  const [userModalError, setUserModalError] = useState('');
+  const [userSaving, setUserSaving] = useState(false);
+  const [userActionLoadingId, setUserActionLoadingId] = useState<string | null>(null);
+
   const [userFormData, setUserFormData] = useState<{
     fullName: string;
     email: string;
@@ -80,7 +87,7 @@ export const UserManagementModule: React.FC<{ token: string; currentUser?: any }
     email: '',
     password: '',
     phone: '',
-    role: 'MECANICO',
+    role: 'OPERADOR',
     isActive: true,
     companyIds: [],
   });

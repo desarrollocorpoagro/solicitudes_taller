@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
-import { User, Company, UserCompany } from '../models';
+import { User, Company, UserCompany, UserPermission, Notificacion, OrdenAuditLog } from '../models';
 import { logger } from '../utils/logger';
 
 export class UserController {
@@ -286,6 +286,9 @@ export class UserController {
             ],
           });
         }
+      } else if (role) {
+        // Sincronizar el rol en las empresas asignadas existentes si no se envió lista de empresas
+        await UserCompany.update({ role: user.role }, { where: { userId: id } });
       }
 
       const updatedUser = await User.findByPk(id, {
@@ -293,7 +296,7 @@ export class UserController {
         include: [{ model: UserCompany, as: 'userCompanies', include: [{ model: Company, as: 'company' }] }],
       });
 
-      logger.info(`[UserController] Usuario actualizado: ${user.email}`);
+      logger.info(`[UserController] Usuario actualizado: ${user.email} (Rol: ${user.role})`);
       return res.json({
         success: true,
         message: 'Usuario actualizado exitosamente.',
@@ -305,25 +308,50 @@ export class UserController {
   }
 
   /**
-   * Elimina o desactiva un usuario.
+   * Elimina un usuario del sistema de forma segura.
    */
   static async deleteUser(req: Request, res: Response) {
     try {
       const { id } = req.params;
+
+      // Impedir que el usuario en sesión se elimine a sí mismo
+      if ((req.user as any)?.userId === id) {
+        return res.status(400).json({
+          success: false,
+          error: 'No puede eliminar su propia cuenta de usuario activa.',
+        });
+      }
+
       const user = await User.findByPk(id);
       if (!user) {
         return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
       }
 
+      // Limpiar asociaciones de empresas y permisos personalizados
       await UserCompany.destroy({ where: { userId: id } });
+      await UserPermission.destroy({ where: { userId: id } });
+
+      // Desvincular registros de trazabilidad no eliminables en cascada
+      try {
+        await Notificacion.update({ userId: null as any }, { where: { userId: id } });
+      } catch (e) {
+        // Continuar si no aplica
+      }
+      try {
+        await OrdenAuditLog.update({ userId: null as any }, { where: { userId: id } });
+      } catch (e) {
+        // Continuar si no aplica
+      }
+
       await user.destroy();
 
       logger.info(`[UserController] Usuario eliminado: ${user.email}`);
       return res.json({
         success: true,
-        message: 'Usuario eliminado del sistema.',
+        message: `Usuario ${user.fullName} (${user.email}) eliminado exitosamente del sistema.`,
       });
     } catch (error: any) {
+      logger.error(`[UserController] Error al eliminar usuario: ${error.message}`);
       return res.status(500).json({ success: false, error: error.message });
     }
   }

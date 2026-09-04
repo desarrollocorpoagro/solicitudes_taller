@@ -70,7 +70,7 @@ async function startServer() {
   );
 
   // 4. Healthcheck y Endpoint de Pruebas Unitarias
-  app.get('/health', (_req: Request, res: Response) => {
+  const handleHealth = (_req: Request, res: Response) => {
     res.json({
       status: 'UP',
       service: 'sanluis-backend-api',
@@ -78,7 +78,10 @@ async function startServer() {
       environment: process.env.NODE_ENV || 'development',
       dialect: process.env.DB_DIALECT || 'sqlite',
     });
-  });
+  };
+  app.get('/health', handleHealth);
+  app.get('/api/health', handleHealth);
+  app.get('/api/v1/health', handleHealth);
 
   app.post('/api/v1/system/run-tests', async (_req: Request, res: Response) => {
     try {

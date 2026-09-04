@@ -24,14 +24,40 @@ export const selectCompanySchema = {
 };
 
 // 2. Usuarios
+export const ALL_SYSTEM_ROLES = [
+  'ADMIN',
+  'GERENTE_TALLER',
+  'SUPERVISOR',
+  'RESPONSABLE_FLOTA',
+  'MECANICO',
+  'ALMACENISTA',
+  'SOLICITANTE',
+  'AUDITOR',
+  'OPERADOR',
+];
+
 export const createUserSchema = {
   body: Joi.object({
     fullName: Joi.string().min(3).max(100).required(),
     email: Joi.string().email().required(),
     password: Joi.string().min(6).required(),
     phone: Joi.string().allow('', null),
-    role: Joi.string().valid('ADMIN', 'GERENTE_TALLER', 'MECANICO', 'RESPONSABLE_FLOTA', 'ALMACENISTA', 'OPERADOR').default('OPERADOR'),
+    role: Joi.string().valid(...ALL_SYSTEM_ROLES).default('OPERADOR'),
     isActive: Joi.boolean().default(true),
+    companyIds: Joi.array().items(Joi.string().uuid()).allow(null),
+    companyId: Joi.string().uuid().allow('', null),
+    assignedCompanies: Joi.array().items(
+      Joi.object({
+        companyId: Joi.string().uuid().required(),
+        role: Joi.string().valid(...ALL_SYSTEM_ROLES).optional(),
+        permissions: Joi.array().items(
+          Joi.object({
+            module: Joi.string().required(),
+            actions: Joi.array().items(Joi.string()).required(),
+          })
+        ).optional(),
+      })
+    ).allow(null),
   }),
 };
 
@@ -42,10 +68,24 @@ export const updateUserSchema = {
   body: Joi.object({
     fullName: Joi.string().min(3).max(100),
     email: Joi.string().email(),
-    password: Joi.string().min(6).allow('', null),
+    password: Joi.string().min(6).empty('').allow('', null),
     phone: Joi.string().allow('', null),
-    role: Joi.string().valid('ADMIN', 'GERENTE_TALLER', 'MECANICO', 'RESPONSABLE_FLOTA', 'ALMACENISTA', 'OPERADOR'),
+    role: Joi.string().valid(...ALL_SYSTEM_ROLES),
     isActive: Joi.boolean(),
+    companyIds: Joi.array().items(Joi.string().uuid()).allow(null),
+    companyId: Joi.string().uuid().allow('', null),
+    assignedCompanies: Joi.array().items(
+      Joi.object({
+        companyId: Joi.string().uuid().required(),
+        role: Joi.string().valid(...ALL_SYSTEM_ROLES).optional(),
+        permissions: Joi.array().items(
+          Joi.object({
+            module: Joi.string().required(),
+            actions: Joi.array().items(Joi.string()).required(),
+          })
+        ).optional(),
+      })
+    ).allow(null),
   }),
 };
 
@@ -62,7 +102,7 @@ export const createCompanySchema = {
 export const assignUserCompanySchema = {
   body: Joi.object({
     companyId: Joi.string().uuid().required(),
-    role: Joi.string().valid('ADMIN', 'GERENTE_TALLER', 'MECANICO', 'RESPONSABLE_FLOTA', 'ALMACENISTA', 'OPERADOR').required(),
+    role: Joi.string().valid(...ALL_SYSTEM_ROLES).required(),
     permissions: Joi.array().items(
       Joi.object({
         module: Joi.string().required(),

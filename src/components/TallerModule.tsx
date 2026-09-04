@@ -95,8 +95,27 @@ interface SolicitudExt {
   estadoAprobacion: 'Pendiente' | 'Aprobada' | 'Rechazada';
 }
 
-export const TallerModule: React.FC<{ token: string; activeCompany: any; currentUser?: any }> = ({ token, activeCompany, currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'apertura' | 'areas' | 'repuestos' | 'externos' | 'aprob' | 'almacen' | 'cierre' | 'auditoria'>('apertura');
+export const TallerModule: React.FC<{
+  token: string;
+  activeCompany: any;
+  currentUser?: any;
+  subTab?: 'apertura' | 'areas' | 'repuestos' | 'externos' | 'aprob' | 'almacen' | 'cierre' | 'auditoria';
+  onSubTabChange?: (tab: 'apertura' | 'areas' | 'repuestos' | 'externos' | 'aprob' | 'almacen' | 'cierre' | 'auditoria') => void;
+}> = ({ token, activeCompany, currentUser, subTab, onSubTabChange }) => {
+  const [activeTab, setActiveTabState] = useState<'apertura' | 'areas' | 'repuestos' | 'externos' | 'aprob' | 'almacen' | 'cierre' | 'auditoria'>(subTab || 'apertura');
+
+  useEffect(() => {
+    if (subTab && subTab !== activeTab) {
+      setActiveTabState(subTab);
+    }
+  }, [subTab]);
+
+  const setActiveTab = (tab: 'apertura' | 'areas' | 'repuestos' | 'externos' | 'aprob' | 'almacen' | 'cierre' | 'auditoria') => {
+    setActiveTabState(tab);
+    if (onSubTabChange) {
+      onSubTabChange(tab);
+    }
+  };
 
   // Listas de la empresa activa
   const [companyFleet, setCompanyFleet] = useState<Unidad[]>([]);
@@ -142,6 +161,16 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
   const [formArea, setFormArea] = useState({ area: 'Reparaciones mayores', mecanico: 'José Ramírez', diagnostico: 'Revisión y sustitución de pastillas y discos.', horas: 2 });
   const [formRep, setFormRep] = useState({ otId: '', cod: 'FRE-0234', cant: 1, motivo: 'Reemplazo preventivo por alabeo excesivo' });
   const [formExt, setFormExt] = useState({ otId: '', proveedor: 'Frenos y Rectificados Centro C.A.', descripcion: 'Rectificado de discos delanteros', conGarantia: false, ordenOrigen: '', costo: 45 });
+
+  // Estados para autocomplete de repuestos
+  const [repuestoSearch, setRepuestoSearch] = useState('');
+  const [showRepuestosDropdown, setShowRepuestosDropdown] = useState(false);
+  const [repuestosLoading, setRepuestosLoading] = useState(false);
+
+  // Estados para autocomplete de mecánico en orden de área
+  const [areaMecanicoSearch, setAreaMecanicoSearch] = useState('');
+  const [showAreaMecanicosDropdown, setShowAreaMecanicosDropdown] = useState(false);
+  const [creandoArea, setCreandoArea] = useState(false);
 
   // Helper centralizado para peticiones autenticadas con contexto de empresa
   const authFetch = async (url: string, options: RequestInit = {}) => {
@@ -256,15 +285,91 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
     showToast(`Conductor "${cleanName}" seleccionado y agregado.`);
   };
 
+  // Regla de negocio para stock de repuestos:
+  // Si codigo_subalmacen !== '01': Central: [stock_act], Stock: 0
+  // Si codigo_subalmacen === '01': Stock: [stock_act], Central: 0
+  const getRepuestoStockInfo = (item?: any) => {
+    if (!item) {
+      return { stock: 0, central: 0, stockLabel: 'Stock: 0', centralLabel: 'Central: 0', isSub01: true };
+    }
+    const sub = String(item.codigo_subalmacen || '').trim();
+    const stockAct = Number(item.stock_act ?? item.stock ?? 0);
+    const isSub01 = sub === '01';
+
+    if (isSub01) {
+      return {
+        stock: stockAct,
+        central: 0,
+        stockLabel: `Stock: ${stockAct}`,
+        centralLabel: 'Central: 0',
+        isSub01: true,
+      };
+    } else {
+      return {
+        stock: 0,
+        central: stockAct,
+        stockLabel: 'Stock: 0',
+        centralLabel: `Central: ${stockAct}`,
+        isSub01: false,
+      };
+    }
+  };
+
+  const handleSelectRepuesto = (item: any) => {
+    setFormRep(prev => ({ ...prev, cod: item.cod }));
+    setRepuestoSearch('');
+    setShowRepuestosDropdown(false);
+  };
+
   const cargarCatalogo = async () => {
+    setRepuestosLoading(true);
     try {
+      // 1. Intentar cargar los artículos de Profit (con codigo_subalmacen, sub_almacen, stock_act)
+      const resProfit = await authFetch('/api/v1/profit/articulos?limit=2000&sortBy=nombre_producto&sortOrder=ASC');
+      const dataProfit = await resProfit.json();
+      if (dataProfit.success && Array.isArray(dataProfit.data) && dataProfit.data.length > 0) {
+        const mapeados = dataProfit.data.map((item: any) => ({
+          cod: item.codigo_profit || item.cod,
+          desc: item.nombre_producto || item.desc,
+          stock_act: Number(item.stock_act ?? item.stock ?? 0),
+          codigo_subalmacen: String(item.codigo_subalmacen || '').trim(),
+          sub_almacen: item.sub_almacen || '',
+          codigo_almacen: item.codigo_almacen || '01',
+          almacen: item.almacen || '',
+          costo: Number(item.costo || 0),
+          categoria: item.categoria || 'REPUESTOS',
+        }));
+        setCatalogo(mapeados);
+        if (mapeados.length > 0 && (!formRep.cod || formRep.cod === 'FRE-0234')) {
+          setFormRep(prev => ({ ...prev, cod: mapeados[0].cod }));
+        }
+        return;
+      }
+
+      // 2. Fallback a /api/v1/catalogo
       const res = await authFetch('/api/v1/catalogo');
       const data = await res.json();
-      if (data.success) {
-        setCatalogo(data.data);
+      if (data.success && Array.isArray(data.data)) {
+        const mapeados = data.data.map((item: any) => ({
+          cod: item.cod || item.codigo_profit,
+          desc: item.desc || item.nombre_producto,
+          stock_act: Number(item.stock_act ?? item.stock ?? 0),
+          codigo_subalmacen: String(item.codigo_subalmacen || '01').trim(),
+          sub_almacen: item.sub_almacen || '',
+          codigo_almacen: item.codigo_almacen || '01',
+          almacen: item.almacen || '',
+          costo: Number(item.costo || 0),
+          categoria: item.categoria || 'REPUESTOS',
+        }));
+        setCatalogo(mapeados);
+        if (mapeados.length > 0 && (!formRep.cod || formRep.cod === 'FRE-0234')) {
+          setFormRep(prev => ({ ...prev, cod: mapeados[0].cod }));
+        }
       }
     } catch (err) {
       console.error('Error al cargar catálogo:', err);
+    } finally {
+      setRepuestosLoading(false);
     }
   };
 
@@ -348,7 +453,12 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
       const res = await authFetch(`/api/v1/ordenes/${targetOrdNo}`);
       const data = await res.json();
       if (data.success) {
-        setOts(data.data.ordenesArea || []);
+        const loadedOts = data.data.ordenesArea || [];
+        setOts(loadedOts);
+        if (loadedOts.length > 0) {
+          setFormRep(prev => ({ ...prev, otId: prev.otId || loadedOts[0].id }));
+          setFormExt(prev => ({ ...prev, otId: prev.otId || loadedOts[0].id }));
+        }
         setReps(data.data.solicitudesRepuesto || []);
         setExts(data.data.solicitudesExterno || []);
         setEstadoOrden(data.data.estado);
@@ -488,10 +598,24 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
   };
 
   const handleCrearArea = async () => {
-    if (!formArea.area || !formArea.mecanico) {
-      alert('Complete el área y mecánico asignado');
+    if (!ordNo || ordNo.includes('NUEVA')) {
+      showToast('Debe aperturar la orden de servicio en la pestaña 01 Apertura antes de abrir órdenes de área técnica.', 'err');
       return;
     }
+    if (estadoOrden === 'Cerrada') {
+      showToast('No se pueden añadir órdenes de área a una orden de servicio que ya ha sido cerrada.', 'err');
+      return;
+    }
+    if (!formArea.area) {
+      showToast('Seleccione el área técnica a aperturar.', 'err');
+      return;
+    }
+    if (!formArea.mecanico || !formArea.mecanico.trim()) {
+      showToast('Debe seleccionar o asignar un mecánico responsable para el área.', 'err');
+      return;
+    }
+
+    setCreandoArea(true);
     try {
       const res = await authFetch(`/api/v1/ordenes/${ordNo}/areas`, {
         method: 'POST',
@@ -499,13 +623,24 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
       });
       const data = await res.json();
       if (data.success) {
-        showToast(`Orden de área ${data.data.id} creada con éxito`);
-        cargarOrdenActual(ordNo);
+        showToast(`¡Orden de área ${data.data.id} creada con éxito para ${formArea.area}!`);
+        await cargarOrdenActual(ordNo);
+        // Limpiar el campo de diagnóstico manteniendo la experiencia fluida
+        setFormArea(prev => ({
+          ...prev,
+          diagnostico: '',
+          horas: 2,
+        }));
+        setAreaMecanicoSearch('');
+        setShowAreaMecanicosDropdown(false);
       } else {
-        showToast(data.error, 'err');
+        showToast(data.error || 'Error al abrir orden de área', 'err');
       }
     } catch (err: any) {
-      showToast(err.message, 'err');
+      console.error('Error al crear orden de área:', err);
+      showToast(err.message || 'Error de conexión al abrir orden de área', 'err');
+    } finally {
+      setCreandoArea(false);
     }
   };
 
@@ -743,33 +878,7 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
           </div>
         </div>
 
-        {/* Selector rápido de flota de la empresa */}
-        {companyFleet.length > 0 && (
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: 'var(--slate)', fontWeight: 600 }}>Unidades de {activeCompany?.code || 'esta empresa'}:</span>
-            {companyFleet.map((v) => (
-              <button
-                key={v.placa}
-                type="button"
-                onClick={() => {
-                  setPlaca(v.placa);
-                  consultarPlaca(v.placa);
-                }}
-                className={`chip mono ${placa === v.placa ? 'b-ok' : ''}`}
-                style={{
-                  cursor: 'pointer',
-                  border: placa === v.placa ? '2px solid var(--navy)' : '1px solid var(--line)',
-                  background: placa === v.placa ? 'var(--navy)' : '#ffffff',
-                  color: placa === v.placa ? '#ffffff' : 'var(--ink)',
-                  fontWeight: 600,
-                  fontSize: 12,
-                }}
-              >
-                {v.placa} ({v.marca})
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Selector rápido de flota de la empresa (oculto por solicitud de usuario) */}
       </div>
 
       {/* Top Banner de la Orden */}
@@ -800,33 +909,6 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
               <span className="v" style={{ color: 'var(--navy)', fontWeight: 700 }}>${totalGeneral.toFixed(2)}</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Navegación por pestañas (Fase 1 Taller) */}
-      <div className="tabs" style={{ borderRadius: 'var(--r)', marginBottom: 16 }}>
-        <div className="tabs-in">
-          {[
-            { id: 'apertura', num: '01', label: 'Apertura', flag: !unidad || !sintomas.trim() },
-            { id: 'areas', num: '02', label: 'Áreas y diagnóstico', flag: !ots.length || otsAbiertas.length > 0 },
-            { id: 'repuestos', num: '03', label: 'Repuestos', flag: false },
-            { id: 'externos', num: '04', label: 'Servicios externos', flag: false },
-            { id: 'aprob', num: '05', label: 'Aprobaciones', flag: pendAprob > 0 },
-            { id: 'almacen', num: '06', label: 'Almacén', flag: sinDespacho > 0 },
-            { id: 'cierre', num: '07', label: 'Cierre', flag: !puedeCerrar },
-            { id: 'auditoria', num: '08', label: 'Auditoría / Trazabilidad', flag: false },
-          ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id as any)}
-              className={`tab ${activeTab === t.id ? 'active' : ''} ${t.flag ? 'flag' : ''}`}
-              aria-selected={activeTab === t.id}
-            >
-              <span className="num">{t.num}</span>
-              {t.label}
-              <span className="dot" />
-            </button>
-          ))}
         </div>
       </div>
 
@@ -1329,6 +1411,21 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
       <div className={`panel ${activeTab === 'areas' ? 'on' : ''}`}>
         <div className="card">
           <h2>Abrir orden en un área</h2>
+
+          {ordNo && ordNo.includes('NUEVA') && (
+            <div className="note n-bad" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <span>⚠️ La orden de servicio actual es un borrador nuevo. Debes guardarla primero en <b>01 Apertura</b> para habilitar la apertura de órdenes de área.</span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('apertura')}
+                className="btn"
+                style={{ fontSize: 12, padding: '4px 10px', background: '#ffffff' }}
+              >
+                Ir a 01 Apertura →
+              </button>
+            </div>
+          )}
+
           <div className="grid g3" style={{ marginBottom: 14 }}>
             <label className="f">
               <span className="req">Área</span>
@@ -1345,29 +1442,209 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
                 <option>Lavado</option>
               </select>
             </label>
-            <label className="f">
-              <span className="req">Mecánico Asignado</span>
-              <select
-                value={formArea.mecanico}
-                onChange={(e) => setFormArea({ ...formArea, mecanico: e.target.value })}
-              >
-                {mecanicosList.length > 0 ? (
-                  mecanicosList.map((m) => (
-                    <option key={m.codigo} value={m.nombre}>
-                      [{m.codigo}] {m.nombre} {m.cargo ? `(${m.cargo})` : ''}
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    <option>José Gregorio Hernández Ramírez</option>
-                    <option>Luis Márquez</option>
-                    <option>Ana Peña</option>
-                    <option>Carlos Ojeda</option>
-                    <option>Miguel Sanz</option>
-                  </>
+
+            {/* Mecánico Asignado: Autocompletado predictivo con búsqueda */}
+            <div className="f" style={{ position: 'relative' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span className="req" style={{ fontWeight: 600, fontSize: 13 }}>Mecánico Asignado</span>
+                <span style={{ fontSize: 11, color: 'var(--slate)', fontFamily: 'monospace' }}>
+                  Asignado: <b style={{ color: 'var(--navy)' }}>{formArea.mecanico || 'Sin asignar'}</b>
+                </span>
+              </div>
+
+              <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <Search className="w-4 h-4 text-[var(--slate)]" style={{ position: 'absolute', left: 10, pointerEvents: 'none' }} />
+                  <input
+                    type="text"
+                    value={areaMecanicoSearch}
+                    onChange={(e) => {
+                      setAreaMecanicoSearch(e.target.value);
+                      setShowAreaMecanicosDropdown(true);
+                    }}
+                    onFocus={() => setShowAreaMecanicosDropdown(true)}
+                    placeholder={
+                      (() => {
+                        const actual = mecanicosList.find(m => m.nombre === formArea.mecanico || m.codigo === formArea.mecanico);
+                        return actual
+                          ? `[${actual.codigo}] ${actual.nombre}${actual.cargo ? ` — ${actual.cargo}` : ''}`
+                          : (formArea.mecanico || "Buscar mecánico por nombre o código...");
+                      })()
+                    }
+                    style={{ paddingLeft: 32, paddingRight: 56, width: '100%', height: 38 }}
+                  />
+                  <div style={{ position: 'absolute', right: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {areaMecanicoSearch && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAreaMecanicoSearch('');
+                        }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--slate)' }}
+                        title="Limpiar búsqueda"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowAreaMecanicosDropdown(!showAreaMecanicosDropdown)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--slate)' }}
+                      title="Ver catálogo de mecánicos"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dropdown flotante con lista de mecánicos */}
+                {showAreaMecanicosDropdown && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      zIndex: 50,
+                      background: '#ffffff',
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)',
+                      maxHeight: 260,
+                      overflowY: 'auto',
+                      marginTop: 4,
+                      padding: 4,
+                    }}
+                  >
+                    <div style={{ padding: '6px 8px', fontSize: 11, color: 'var(--slate)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Catálogo de Mecánicos ({mecanicosList.length} registrados)</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAreaMecanicosDropdown(false)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--navy)', fontWeight: 600 }}
+                      >
+                        Cerrar ✕
+                      </button>
+                    </div>
+
+                    {/* Opción de usar el texto ingresado directamente */}
+                    {areaMecanicoSearch.trim() && (
+                      <div
+                        onClick={() => {
+                          setFormArea(prev => ({ ...prev, mecanico: areaMecanicoSearch.trim() }));
+                          setAreaMecanicoSearch('');
+                          setShowAreaMecanicosDropdown(false);
+                        }}
+                        style={{
+                          margin: '4px 0',
+                          padding: '8px 10px',
+                          borderRadius: 6,
+                          background: '#eff6ff',
+                          border: '1px dashed #3b82f6',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          color: '#1e40af',
+                          fontSize: 12,
+                          fontWeight: 600,
+                        }}
+                      >
+                        <UserPlus className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span style={{ flex: 1 }}>
+                          ➕ Asignar directamente: <b>"{areaMecanicoSearch.trim()}"</b>
+                        </span>
+                      </div>
+                    )}
+
+                    {mecanicosLoading ? (
+                      <div style={{ padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--slate)' }}>Cargando catálogo de mecánicos...</div>
+                    ) : (
+                      (() => {
+                        const baseLista = mecanicosList.length > 0 ? mecanicosList : [
+                          { codigo: 'MEC-01', nombre: 'José Gregorio Hernández Ramírez', cargo: 'Mecánico Mayor', activo: true },
+                          { codigo: 'MEC-02', nombre: 'Luis Márquez', cargo: 'Especialista Frenos', activo: true },
+                          { codigo: 'MEC-03', nombre: 'Ana Peña', cargo: 'Técnico Hidráulico', activo: true },
+                          { codigo: 'MEC-04', nombre: 'Carlos Ojeda', cargo: 'Electromecánico', activo: true },
+                          { codigo: 'MEC-05', nombre: 'Miguel Sanz', cargo: 'Mecánico General', activo: true },
+                        ];
+
+                        const filtrados = baseLista.filter(m => {
+                          if (!areaMecanicoSearch.trim()) return true;
+                          const t = areaMecanicoSearch.toLowerCase();
+                          return m.nombre.toLowerCase().includes(t) || m.codigo.toLowerCase().includes(t) || (m.cargo && m.cargo.toLowerCase().includes(t));
+                        });
+
+                        if (filtrados.length === 0) {
+                          return (
+                            <div style={{ padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--slate)' }}>
+                              No se encontraron mecánicos para "{areaMecanicoSearch}"
+                              <div style={{ marginTop: 4, color: 'var(--navy)', fontWeight: 500 }}>
+                                Puedes usar la opción superior para asignarlo directamente.
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return filtrados.map(m => {
+                          const isSelected = formArea.mecanico === m.nombre || formArea.mecanico === m.codigo;
+                          return (
+                            <div
+                              key={m.codigo}
+                              onClick={() => {
+                                setFormArea(prev => ({ ...prev, mecanico: m.nombre }));
+                                setAreaMecanicoSearch('');
+                                setShowAreaMecanicosDropdown(false);
+                              }}
+                              style={{
+                                padding: '8px 10px',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                                background: isSelected ? '#f0fdf4' : 'transparent',
+                                borderBottom: '1px solid #f1f5f9',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                transition: 'background 0.15s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = '#f8fafc';
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent';
+                              }}
+                            >
+                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 12, color: 'var(--navy)', background: '#e2e8f0', padding: '1px 5px', borderRadius: 4 }}>
+                                    {m.codigo}
+                                  </span>
+                                  <span style={{ fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
+                                    {m.nombre}
+                                  </span>
+                                  {m.activo && (
+                                    <span style={{ fontSize: 10, background: '#dcfce7', color: '#15803d', padding: '1px 4px', borderRadius: 3, fontWeight: 600 }}>
+                                      Activo
+                                    </span>
+                                  )}
+                                </div>
+                                {m.cargo && (
+                                  <span style={{ fontSize: 11, color: 'var(--slate)', marginTop: 2 }}>
+                                    {m.cargo}
+                                  </span>
+                                )}
+                              </div>
+                              {isSelected && <Check className="w-4 h-4 text-emerald-600" />}
+                            </div>
+                          );
+                        });
+                      })()
+                    )}
+                  </div>
                 )}
-              </select>
-            </label>
+              </div>
+            </div>
+
             <label className="f">
               <span>Horas estimadas</span>
               <input
@@ -1379,6 +1656,7 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
               />
             </label>
           </div>
+
           <label className="f" style={{ marginBottom: 14 }}>
             <span>Triaje / Diagnóstico</span>
             <textarea
@@ -1387,11 +1665,30 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
               placeholder="Hallazgo técnico y trabajo a ejecutar..."
             />
           </label>
+
           <button
+            type="button"
             onClick={handleCrearArea}
+            disabled={creandoArea || (Boolean(ordNo) && ordNo.includes('NUEVA'))}
             className="btn dark"
+            style={{
+              padding: '8px 20px',
+              fontWeight: 600,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              opacity: (creandoArea || (Boolean(ordNo) && ordNo.includes('NUEVA'))) ? 0.7 : 1,
+              cursor: (creandoArea || (Boolean(ordNo) && ordNo.includes('NUEVA'))) ? 'not-allowed' : 'pointer',
+            }}
           >
-            Abrir orden de área
+            {creandoArea ? (
+              <>
+                <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full" />
+                Abriendo orden de área...
+              </>
+            ) : (
+              'Abrir orden de área'
+            )}
           </button>
         </div>
 
@@ -1468,20 +1765,287 @@ export const TallerModule: React.FC<{ token: string; activeCompany: any; current
                 value={formRep.otId}
                 onChange={(e) => setFormRep({ ...formRep, otId: e.target.value })}
               >
-                {ots.map(o => <option key={o.id} value={o.id}>{o.id} — {o.area}</option>)}
+                {ots.length === 0 ? (
+                  <option value="">(Sin órdenes de área abiertas)</option>
+                ) : (
+                  ots.map(o => <option key={o.id} value={o.id}>{o.id} — {o.area}</option>)
+                )}
               </select>
             </label>
-            <label className="f">
-              <span className="req">Repuesto</span>
-              <select
-                value={formRep.cod}
-                onChange={(e) => setFormRep({ ...formRep, cod: e.target.value })}
-                className="mono"
-              >
-                {catalogo.map(c => <option key={c.cod} value={c.cod}>{c.cod} — {c.desc} (Stock: {c.stock} | ${c.costo})</option>)}
-              </select>
-            </label>
+
+            {/* Repuesto: Autocomplete con búsqueda y visualización de Stock vs Central */}
+            {(() => {
+              const repuestoSeleccionado = catalogo.find(c => String(c.cod).trim().toUpperCase() === String(formRep.cod).trim().toUpperCase()) || catalogo[0];
+              const stockInfoSeleccionado = getRepuestoStockInfo(repuestoSeleccionado);
+
+              return (
+                <div className="f" style={{ position: 'relative' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>
+                      <span className="req">Repuesto</span> (Búsqueda predictiva)
+                    </span>
+                    {repuestoSeleccionado && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+                        <span
+                          style={{
+                            padding: '2px 7px',
+                            borderRadius: 4,
+                            fontWeight: 600,
+                            backgroundColor: stockInfoSeleccionado.isSub01 ? '#dcfce7' : '#f1f5f9',
+                            color: stockInfoSeleccionado.isSub01 ? '#166534' : '#64748b',
+                            border: stockInfoSeleccionado.isSub01 ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+                          }}
+                        >
+                          {stockInfoSeleccionado.stockLabel}
+                        </span>
+                        <span
+                          style={{
+                            padding: '2px 7px',
+                            borderRadius: 4,
+                            fontWeight: 600,
+                            backgroundColor: !stockInfoSeleccionado.isSub01 ? '#dbeafe' : '#f1f5f9',
+                            color: !stockInfoSeleccionado.isSub01 ? '#1e40af' : '#64748b',
+                            border: !stockInfoSeleccionado.isSub01 ? '1px solid #bfdbfe' : '1px solid #e2e8f0',
+                          }}
+                        >
+                          {stockInfoSeleccionado.centralLabel}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ position: 'relative' }}>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <Search className="w-4 h-4 text-[var(--slate)]" style={{ position: 'absolute', left: 10, pointerEvents: 'none' }} />
+                      <input
+                        type="text"
+                        value={repuestoSearch || (showRepuestosDropdown ? '' : (repuestoSeleccionado ? `${repuestoSeleccionado.cod} — ${repuestoSeleccionado.desc}` : formRep.cod))}
+                        onChange={(e) => {
+                          setRepuestoSearch(e.target.value);
+                          setShowRepuestosDropdown(true);
+                        }}
+                        onFocus={() => {
+                          setShowRepuestosDropdown(true);
+                        }}
+                        placeholder="Buscar repuesto por código o descripción..."
+                        style={{ paddingLeft: 32, paddingRight: 56, width: '100%', height: 38 }}
+                      />
+                      <div style={{ position: 'absolute', right: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        {(repuestoSearch || formRep.cod) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRepuestoSearch('');
+                              setShowRepuestosDropdown(false);
+                            }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--slate)' }}
+                            title="Limpiar búsqueda"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowRepuestosDropdown(!showRepuestosDropdown)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--slate)' }}
+                          title="Desplegar catálogo de repuestos"
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Desplegable Autocomplete con cálculo de Stock vs Central */}
+                    {showRepuestosDropdown && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '100%',
+                          left: 0,
+                          right: 0,
+                          zIndex: 60,
+                          background: '#ffffff',
+                          border: '1px solid var(--border)',
+                          borderRadius: 8,
+                          boxShadow: '0 10px 25px -5px rgba(0,0,0,0.18)',
+                          maxHeight: 280,
+                          overflowY: 'auto',
+                          marginTop: 4,
+                          padding: 4,
+                        }}
+                      >
+                        <div style={{ padding: '6px 8px', fontSize: 11, color: 'var(--slate)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>Catálogo de Repuestos ({catalogo.length} artículos)</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowRepuestosDropdown(false)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--navy)', fontWeight: 600 }}
+                          >
+                            Cerrar ✕
+                          </button>
+                        </div>
+
+                        {repuestosLoading ? (
+                          <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--slate)' }}>
+                            Cargando catálogo de repuestos...
+                          </div>
+                        ) : (
+                          (() => {
+                            const filtrados = catalogo.filter(c => {
+                              if (!repuestoSearch.trim()) return true;
+                              const t = repuestoSearch.toLowerCase();
+                              return (
+                                (c.cod && c.cod.toLowerCase().includes(t)) ||
+                                (c.desc && c.desc.toLowerCase().includes(t)) ||
+                                (c.codigo_subalmacen && c.codigo_subalmacen.toLowerCase().includes(t))
+                              );
+                            });
+
+                            if (filtrados.length === 0) {
+                              return (
+                                <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--slate)' }}>
+                                  No se encontraron repuestos para "{repuestoSearch}".
+                                </div>
+                              );
+                            }
+
+                            return filtrados.slice(0, 80).map((c) => {
+                              const stockInfo = getRepuestoStockInfo(c);
+                              const isSelected = formRep.cod === c.cod;
+                              return (
+                                <div
+                                  key={c.cod}
+                                  onClick={() => handleSelectRepuesto(c)}
+                                  style={{
+                                    padding: '8px 10px',
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 3,
+                                    background: isSelected ? '#eff6ff' : 'transparent',
+                                    borderBottom: '1px solid #f1f5f9',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!isSelected) (e.currentTarget.style.backgroundColor = '#f8fafc');
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (!isSelected) (e.currentTarget.style.backgroundColor = 'transparent');
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--navy)' }}>
+                                      <span className="mono" style={{ color: '#2563eb', marginRight: 6 }}>{c.cod}</span>
+                                      {c.desc}
+                                    </span>
+                                  </div>
+
+                                  {/* Sustitución del precio por Stock vs Central según codigo_subalmacen */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, marginTop: 2 }}>
+                                    <span
+                                      style={{
+                                        padding: '1px 6px',
+                                        borderRadius: 4,
+                                        fontWeight: 600,
+                                        backgroundColor: stockInfo.isSub01 ? '#dcfce7' : '#f1f5f9',
+                                        color: stockInfo.isSub01 ? '#166534' : '#64748b',
+                                      }}
+                                    >
+                                      {stockInfo.stockLabel}
+                                    </span>
+
+                                    <span
+                                      style={{
+                                        padding: '1px 6px',
+                                        borderRadius: 4,
+                                        fontWeight: 600,
+                                        backgroundColor: !stockInfo.isSub01 ? '#dbeafe' : '#f1f5f9',
+                                        color: !stockInfo.isSub01 ? '#1e40af' : '#64748b',
+                                      }}
+                                    >
+                                      {stockInfo.centralLabel}
+                                    </span>
+
+                                    <span style={{ color: 'var(--slate)', fontSize: 10, marginLeft: 'auto' }}>
+                                      Subalmacén: <b className="mono">{c.codigo_subalmacen || '01'}</b> {c.sub_almacen ? `(${c.sub_almacen})` : ''}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })()
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
+
+          {/* Tarjeta resumen del repuesto seleccionado */}
+          {(() => {
+            const repuestoSeleccionado = catalogo.find(c => String(c.cod).trim().toUpperCase() === String(formRep.cod).trim().toUpperCase());
+            if (!repuestoSeleccionado) return null;
+            const stockInfo = getRepuestoStockInfo(repuestoSeleccionado);
+
+            return (
+              <div
+                style={{
+                  marginBottom: 14,
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  backgroundColor: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)' }}>
+                    <span className="mono" style={{ color: '#2563eb', marginRight: 6 }}>{repuestoSeleccionado.cod}</span>
+                    {repuestoSeleccionado.desc}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--slate)', marginTop: 2 }}>
+                    Sub-almacén Profit: <b>{repuestoSeleccionado.codigo_subalmacen || '01'}</b> {repuestoSeleccionado.sub_almacen ? `— ${repuestoSeleccionado.sub_almacen}` : ''}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      backgroundColor: stockInfo.isSub01 ? '#dcfce7' : '#f1f5f9',
+                      color: stockInfo.isSub01 ? '#166534' : '#64748b',
+                      border: stockInfo.isSub01 ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+                    }}
+                  >
+                    {stockInfo.stockLabel}
+                  </div>
+
+                  <div
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      backgroundColor: !stockInfo.isSub01 ? '#dbeafe' : '#f1f5f9',
+                      color: !stockInfo.isSub01 ? '#1e40af' : '#64748b',
+                      border: !stockInfo.isSub01 ? '1px solid #bfdbfe' : '1px solid #e2e8f0',
+                    }}
+                  >
+                    {stockInfo.centralLabel}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="grid g3" style={{ marginBottom: 14 }}>
             <label className="f">
